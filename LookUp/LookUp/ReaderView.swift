@@ -1,7 +1,6 @@
 import SwiftUI
 
-// If not declared elsewhere, we need the custom PreferenceKey here again.
-// Make sure this is only declared once in your entire project.
+// Make sure this struct is declared only once in your entire project:
 struct ScrollOffsetPreferenceKey: PreferenceKey {
     typealias Value = CGFloat
     static var defaultValue: CGFloat = 0
@@ -21,19 +20,18 @@ struct ReaderView: View {
     
     @State private var readingProgress: Double = 0.0
     
-    // 1. We'll split the content into lines. If there's no content, we provide a single "No content" line for display.
+    // Split the content into lines; if there's no content, show a fallback
     private var lines: [String] {
         guard let text = content, !text.isEmpty else {
             return ["No content available."]
         }
-        // Split by line breaks
         return text.components(separatedBy: .newlines)
     }
     
     var body: some View {
         ScrollViewReader { scrollProxy in
             ScrollView {
-                // 2. A hidden GeometryReader to track scroll offset via PreferenceKey
+                // Hidden GeometryReader + PreferenceKey to track scroll offset
                 GeometryReader { geo in
                     Color.clear
                         .preference(
@@ -44,69 +42,58 @@ struct ReaderView: View {
                 .frame(height: 0)
                 
                 VStack(alignment: .leading, spacing: 10) {
-                    // Optional: Show the book title as the first "line"
+                    // Optional: Show book title before lines
                     Text(bookTitle)
                         .font(.system(size: fontSize + 2))
                         .bold()
                         .padding(.bottom, 5)
                     
-                    // 3. Display each line with an ID for scroll-to
+                    // Display each line with a unique .id for scrolling
                     ForEach(lines.indices, id: \.self) { index in
                         Text(lines[index])
                             .font(.system(size: fontSize))
-                            .id(index) // Mark each line by index
+                            .id(index)
                     }
                 }
                 .padding(.horizontal)
             }
-            // Named coordinate space for offset calculation
             .coordinateSpace(name: "scrollArea")
-            // Listen to offset changes
+            // Listen for scroll offset changes
             .onPreferenceChange(ScrollOffsetPreferenceKey.self) { offset in
                 updateReadingProgress(offset: offset)
             }
-            // 4. On appear, scroll to last progress
+            // Single onAppear to (1) load saved progress, (2) scroll to correct position
             .onAppear {
-                // We'll compute approximate line index from progress
+                // 1) Load existing progress from dataModel
+                if let bookIndex = dataModel.books.firstIndex(where: { $0.id == bookID }) {
+                    readingProgress = dataModel.books[bookIndex].progress
+                }
+                // 2) Compute target line and scroll
                 let targetIndex = Int(Double(lines.count) * readingProgress)
                 let clampedIndex = max(0, min(lines.count - 1, targetIndex))
-                // Then scroll to that line
                 scrollProxy.scrollTo(clampedIndex, anchor: .top)
             }
         }
         .navigationTitle("Reading \(bookTitle)")
-        .onAppear {
-            // If there's an existing progress from DataModel, use that
-            if let bookIndex = dataModel.books.firstIndex(where: { $0.id == bookID }) {
-                readingProgress = dataModel.books[bookIndex].progress
-            }
-        }
     }
     
-    // MARK: - Update Reading Progress
+    /// Updates reading progress and writes it back to dataModel
     private func updateReadingProgress(offset: CGFloat) {
-        // Let's do a simpler approach: offset / totalScrollableHeight
-        // totalScrollableHeight ~ (lines.count * lineHeight) - ScrollView visible region
-        // We'll do a rough approach. For more accurate approach, do a full measurement with GeometryReader on content size.
-        
-        // Estimate total text height:
+        // Estimate total text height
         let approximateLineHeight = fontSize * 1.4
         let totalHeight = approximateLineHeight * Double(lines.count)
         
-        // Current offset
-        let currentOffset = Double(offset)
-        
-        // The visible height of the screen (for clamping)
-        // This can be refined with exact device size or geometry
-        let visibleHeight = 600.0  // a rough guess, or measure with another geometry
+        // Approximate visible height
+        let visibleHeight = 600.0  // This is a rough guess.
         let scrollableHeight = max(totalHeight - visibleHeight, 1)
         
+        let currentOffset = Double(offset)
         var progress = currentOffset / scrollableHeight
-        progress = max(0, min(1, progress))
+        progress = max(0, min(1, progress))  // clamp 0~1
         
-        // Update local state + DataModel
         readingProgress = progress
         
+        // Update dataModel
         if let index = dataModel.books.firstIndex(where: { $0.id == bookID }) {
             dataModel.books[index].progress = progress
         }

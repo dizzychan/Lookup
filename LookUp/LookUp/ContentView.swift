@@ -40,7 +40,6 @@ struct BookshelfView: View {
                 LazyVGrid(columns: columns, spacing: 20) {
                     ForEach(dataModel.books) { book in
                         NavigationLink {
-                            // Pass book.id so ReaderView can update the correct Book's progress
                             ReaderView(
                                 bookTitle: book.title,
                                 content: book.content,
@@ -58,14 +57,21 @@ struct BookshelfView: View {
                                     .font(.caption)
                                     .lineLimit(1)
                                 
-                                ProgressView(value: book.progress)
-                                    .padding(.horizontal)
+                                // Display progress bar + numeric percentage
+                                HStack {
+                                    ProgressView(value: book.progress)
+                                        .frame(width: 80)     // 这里可自行调宽
+                                    Text("\(Int(book.progress * 100))%")
+                                        .font(.caption2)
+                                }
+                                .padding(.horizontal)
                             }
                             .padding()
                             .background(Color(.systemGray6))
                             .cornerRadius(10)
                         }
                     }
+
                 }
                 .padding()
             }
