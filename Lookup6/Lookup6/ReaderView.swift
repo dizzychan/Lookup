@@ -106,7 +106,9 @@ struct ReaderView: View {
                     containerSize: geometry.size,
                     padding: 16
                 )
+                print("ReaderView appear: book.content length=\(book.content.count)")
             }
+            
             .onChange(of: fontSize) { newValue in
                 // 如果字体大小变化，重新分页，并回到第 0 页
                 pages = paginate(
