@@ -87,7 +87,13 @@ struct BookShelfView: View {
     private func destination(for book: Book) -> some View {
         switch book.fileType {
         case .txt:
-            ReaderView(book: book)
+            // 如果章节数组非空，则认为是分章节导入，使用 BookReaderView；
+            // 否则，使用 ReaderView 从 Book.content 读取文本
+            if !book.chapters.isEmpty {
+                BookReaderView(book: book)
+            } else {
+                ReaderView(book: book)
+            }
         case .pdf:
             PDFReaderView(filePath: book.fileURL ?? "")
         case .epub, .docx, .unknown:

@@ -1,127 +1,125 @@
+//  ReaderView.swift
 import SwiftUI
 import SwiftData
-import UIKit  // 用于 measureHeight 中的 UIFont、NSAttributedString
+import UIKit   // UIFont, NSAttributedString
 
-/// 计算给定文本的高度
-fileprivate func measureHeight(of text: String, font: UIFont, width: CGFloat) -> CGFloat {
-    let attributedString = NSAttributedString(
-        string: text,
-        attributes: [.font: font]
-    )
-    let boundingRect = attributedString.boundingRect(
+// MARK: — 分页辅助函数 —
+
+// 1) 计算一段文字在指定字体、指定宽度下的高度
+private func measureHeight(of text: String, font: UIFont, width: CGFloat) -> CGFloat {
+    let attr = NSAttributedString(string: text, attributes: [.font: font])
+    let rect = attr.boundingRect(
         with: CGSize(width: width, height: .greatestFiniteMagnitude),
         options: [.usesLineFragmentOrigin, .usesFontLeading],
         context: nil
     )
-    return ceil(boundingRect.height)
+    return ceil(rect.height)
 }
 
-/// 将全文拆分成多个“屏幕页”，每页在给定宽度、高度和字体大小下恰好容纳
-fileprivate func paginate(content: String,
-                          fontSize: CGFloat,
-                          containerSize: CGSize,
-                          padding: CGFloat = 16) -> [String] {
-    // 简单地按空格拆分文本
+// 2) 按「一屏一页」把长字符串拆成若干页
+private func paginate(
+    content: String,
+    fontSize: CGFloat,
+    containerSize: CGSize,
+    padding: CGFloat = 16
+) -> [String] {
     let words = content.split(separator: " ")
-    
-    // 给文本留出上下左右 padding，避免贴边
     let usableWidth = containerSize.width - 2 * padding
     let usableHeight = containerSize.height - 2 * padding
-    
     let font = UIFont.systemFont(ofSize: fontSize)
-    
+
     var pages: [String] = []
-    var currentText = ""
-    
-    for word in words {
-        // 拼接下一个单词
-        let newText = currentText.isEmpty
-            ? String(word)
-            : currentText + " " + word
-        
-        // 测量拼接后的文本高度
-        let height = measureHeight(of: newText, font: font, width: usableWidth)
-        
-        // 如果超过一页高度，则把之前的 currentText 存为一页，并重新开始
-        if height > usableHeight {
-            if !currentText.isEmpty {
-                pages.append(currentText)
-            }
-            currentText = String(word)
+    var current = ""
+
+    for w in words {
+        let candidate = current.isEmpty ? String(w) : current + " " + w
+        if measureHeight(of: candidate, font: font, width: usableWidth) > usableHeight {
+            // 装不下了 —— 先把 current 当一页 push
+            if !current.isEmpty { pages.append(current) }
+            current = String(w)
         } else {
-            // 还在当前页累加
-            currentText = newText
+            current = candidate
         }
     }
-    
-    // 最后剩余的 currentText 也要加入
-    if !currentText.isEmpty {
-        pages.append(currentText)
-    }
-    
+    // 最后一页别忘了
+    if !current.isEmpty { pages.append(current) }
     return pages
 }
 
-// 用于把长文本简单按固定字符数拆分成多个“页面” (可选，如果你还想保留 chunked 功能)
-extension String {
-    func chunked(by size: Int) -> [String] {
-        var result = [String]()
-        let length = self.count
-        var startIndex = self.startIndex
-        
-        while startIndex < self.endIndex {
-            let endIndex = self.index(startIndex, offsetBy: size, limitedBy: self.endIndex) ?? self.endIndex
-            let substring = self[startIndex..<endIndex]
-            result.append(String(substring))
-            startIndex = endIndex
-        }
-        
-        return result
-    }
-}
+
+// MARK: — 阅读器视图 + 每页书签 —
 
 struct ReaderView: View {
-    let book: Book
-    
+    @Bindable var book: Book                    // 绑定模型，支持自动保存
+    @Environment(\.modelContext) private var context
+
     @AppStorage("readerFontSize") private var fontSize: Double = 18
     @State private var pages: [String] = []
     @State private var currentPage: Int = 0
-    
+
+    // 本页是否已书签
+    private var isBookmarked: Bool {
+        book.bookmarkedPages.contains(currentPage)
+    }
+
     var body: some View {
-        GeometryReader { geometry in
+        GeometryReader { geo in
             TabView(selection: $currentPage) {
-                ForEach(pages.indices, id: \.self) { index in
-                    Text(pages[index])
+                ForEach(pages.indices, id: \.self) { idx in
+                    Text(pages[idx])
                         .font(.system(size: fontSize))
-                        .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                         .padding()
+                        .tag(idx)
                 }
             }
-            .tabViewStyle(.page)
+            .tabViewStyle(.page(indexDisplayMode: .always))
             .onAppear {
-                // 首次出现时进行分页
+                // 分页
                 pages = paginate(
                     content: book.content,
                     fontSize: CGFloat(fontSize),
-                    containerSize: geometry.size,
+                    containerSize: geo.size,
                     padding: 16
                 )
-                print("ReaderView appear: book.content length=\(book.content.count)")
+                // 如果想自动跳到某个页，可以在这里设置：
+                // currentPage = book.bookmarkedPages.first ?? 0
             }
-            
-            .onChange(of: fontSize) { newValue in
-                // 如果字体大小变化，重新分页，并回到第 0 页
+            .onChange(of: fontSize) { _ in
+                // 字体变动后重新分页，保留当前页（或修正到最大页）
                 pages = paginate(
                     content: book.content,
-                    fontSize: CGFloat(newValue),
-                    containerSize: geometry.size,
+                    fontSize: CGFloat(fontSize),
+                    containerSize: geo.size,
                     padding: 16
                 )
-                currentPage = 0
+                currentPage = min(currentPage, pages.count - 1)
+            }
+            .navigationTitle(book.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        togglePageBookmark()
+                    } label: {
+                        Image(systemName: isBookmarked ? "bookmark.fill" : "bookmark")
+                            .foregroundColor(isBookmarked ? .red : .primary)
+                    }
+                }
             }
         }
-        .navigationTitle(book.title)
-        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    /// 给当前页打／取消书签
+    private func togglePageBookmark() {
+        if let idx = book.bookmarkedPages.firstIndex(of: currentPage) {
+            // 已有：移除
+            book.bookmarkedPages.remove(at: idx)
+        } else {
+            // 没有：添加
+            book.bookmarkedPages.append(currentPage)
+        }
+        try? context.save()
     }
 }
 

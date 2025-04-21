@@ -20,6 +20,10 @@ class Book {
     var isPinned: Bool
     var fileType: BookFileType   // 标记此书的文件类型
     var fileURL: String?         // 如果是pdf/epub/docx等非纯文本文件，就记录文件路径
+    //新加的一个
+    var chapters: [Chapter] = []
+
+    var bookmarkedPages: [Int] = []
 
     /// - Parameters:
     ///   - title: 书名

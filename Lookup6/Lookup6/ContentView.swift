@@ -9,7 +9,10 @@ struct ContentView: View {
                 .tabItem {
                     Label("Bookshelf", systemImage: "books.vertical")
                 }
-
+            
+            BookmarksView()
+               .tabItem { Label("Bookmarks", systemImage: "bookmark") }
+            
             ImportView()
                 .tabItem {
                     Label("Import", systemImage: "square.and.arrow.down")
