@@ -1,187 +1,181 @@
+// SourceView.swift
 import SwiftUI
 import SwiftData
 import SwiftSoup
 
-/// 简易搜索结果结构体
-struct SearchResult: Identifiable {
-    let id: String
+/// 搜索结果模型
+struct SourceItem: Identifiable {
+    let id = UUID()
     let title: String
     let author: String
-    let detailURL: String
+    let detailURL: URL
 }
 
 struct SourceView: View {
-    @State private var searchQuery = ""
-    @State private var searchResults: [SearchResult] = []
+    @Environment(\.modelContext) private var context
+
+    @State private var query = ""
+    @State private var results: [SourceItem] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
-
-    @Environment(\.modelContext) private var context
 
     var body: some View {
         NavigationStack {
             VStack {
-                // 搜索输入框
+                // — 搜索框 —
                 HStack {
-                    TextField("Enter keyword", text: $searchQuery)
+                    TextField("Search term", text: $query)
                         .textFieldStyle(.roundedBorder)
-
                     Button("Search") {
-                        Task {
-                            await doSearch()
-                        }
+                        Task { await performSearch() }
                     }
                 }
                 .padding()
 
-                if isLoading {
-                    ProgressView("Searching...")
-                } else if let errorMessage = errorMessage {
-                    Text("Error: \(errorMessage)")
-                        .foregroundColor(.red)
-                } else if searchResults.isEmpty {
-                    Text("No results")
-                        .foregroundColor(.secondary)
-                } else {
-                    // 列表展示结果
-                    List(searchResults) { result in
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text(result.title)
-                                    .font(.headline)
-                                Text(result.author)
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                            }
-                            Spacer()
-                            // 点击 Import
-                            Button("Import") {
-                                Task {
-                                    await importDetailPage(for: result)
-                                }
-                            }
-                            .buttonStyle(.bordered)
+                // — 错误提示 —
+                if let error = errorMessage {
+                    Text(error).foregroundColor(.red)
+                }
+
+                // — 列表 & 导入按钮 —
+                List(results) { item in
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(item.title).font(.headline)
+                            Text(item.author)
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Button("Import") {
+                            Task { await importRemote(item) }
                         }
                     }
                 }
+                .listStyle(.plain)
             }
             .navigationTitle("Source")
         }
     }
 
-    /// 第一次搜索: 只获取列表(书名/作者/链接)
-    private func doSearch() async {
-        guard !searchQuery.isEmpty else { return }
-        isLoading = true
+    // MARK: — 搜索（模拟） —
+    private func performSearch() async {
         errorMessage = nil
-        searchResults = []
+        isLoading = true
+        defer { isLoading = false }
 
-        do {
-            let encoded = searchQuery.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-            let urlString = "https://www.gutenberg.org/ebooks/search/?query=\(encoded)"
-            guard let url = URL(string: urlString) else {
-                throw URLError(.badURL)
-            }
-
-            let (data, _) = try await URLSession.shared.data(from: url)
-            let html = String(data: data, encoding: .utf8) ?? ""
-            let doc = try SwiftSoup.parse(html)
-
-            let elements = try doc.select("li.booklink")
-            var tempResults: [SearchResult] = []
-
-            for element in elements {
-                let title = try element.select("span.title").text()
-                let author = try element.select("span.subtitle").text()
-                let linkHref = try element.select("a.link").attr("href")
-                let uniqueID = linkHref.isEmpty ? UUID().uuidString : linkHref
-
-                let result = SearchResult(
-                    id: uniqueID,
-                    title: title,
-                    author: author,
-                    detailURL: linkHref
-                )
-                tempResults.append(result)
-            }
-            self.searchResults = tempResults
-
-        } catch {
-            self.errorMessage = error.localizedDescription
-        }
-
-        isLoading = false
+        // 模拟网络延迟
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        results = [
+            SourceItem(
+                title: "The Red Room",
+                author: "H. G. Wells",
+                detailURL: URL(string: "https://www.gutenberg.org/files/252/252-h/252-h.htm")!
+            ),
+            SourceItem(
+                title: "The Country of the Blind",
+                author: "H. G. Wells",
+                detailURL: URL(string: "https://www.gutenberg.org/files/3012/3012-h/3012-h.htm")!
+            )
+        ]
     }
 
-    /// Import: 抓取详情页 & 分章节插入
-    private func importDetailPage(for result: SearchResult) async {
-        let baseURL = "https://www.gutenberg.org"
-        let detailURLString = baseURL + result.detailURL
-
-        guard let url = URL(string: detailURLString) else { return }
-
+    // MARK: — 远程下载 + 分章导入 —
+    private func importRemote(_ item: SourceItem) async {
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            let html = String(data: data, encoding: .utf8) ?? ""
-            let doc = try SwiftSoup.parse(html)
+            let (data, _) = try await URLSession.shared.data(from: item.detailURL)
+            guard let html = String(data: data, encoding: .utf8) else {
+                throw URLError(.cannotDecodeContentData)
+            }
 
-            // 1) 先创建 Book
-            let newBook = Book(title: result.title, fileType: .txt)
-            context.insert(newBook)
-
-            // 2) 查找元素: h3.chapter, p.narrative
-            //    假设 <h3 class="chapter"> 表示新章起点,
-            //    <p class="narrative"> 表示本章段落
-            let chapterElements = try doc.select("div.bodytext h3.chapter, div.bodytext h4.event, div.bodytext p.narrative")
-
-            var chapters: [Chapter] = []
-            var currentChapterIndex = 1
-            var currentChapterTitle = "Unknown Chapter"
-            var currentText = ""
-
-            for elem in chapterElements.array() {
-                let tagName = try elem.tagName()
-
-                if tagName == "h3" {
-                    // 遇到新的章节标题 -> 存储上个章节(若有)
-                    if !currentText.isEmpty {
-                        let ch = Chapter(index: currentChapterIndex,
-                                         title: currentChapterTitle,
-                                         content: currentText,
-                                         book: newBook)
-                        context.insert(ch)
-                        chapters.append(ch)
-
-                        currentChapterIndex += 1
-                        currentText = ""
-                    }
-                    // 更新当前章节标题
-                    currentChapterTitle = try elem.text()
-
-                } else if tagName == "p" {
-                    // 段落正文 -> 追加到 currentText
-                    let paragraph = try elem.text()
-                    currentText += paragraph + "\n\n"
+            await MainActor.run {
+                // 执行分章逻辑
+                importTxtAsChapters(bookTitle: item.title, fullText: html)
+                // 保存
+                do {
+                    try context.save()
+                    print("✅ Imported '\(item.title)'")
+                } catch {
+                    print("❌ Save error:", error)
+                    errorMessage = error.localizedDescription
                 }
             }
-
-            // 循环结束后，如果还有剩余章节内容
-            if !currentText.isEmpty {
-                let ch = Chapter(index: currentChapterIndex,
-                                 title: currentChapterTitle,
-                                 content: currentText,
-                                 book: newBook)
-                context.insert(ch)
-                chapters.append(ch)
-            }
-
-            // 3) 保存
-            try context.save()
-
-            print("Import success: Book=\(newBook.title), Chapters=\(chapters.count)")
         } catch {
-            print("Error fetching detail page: \(error.localizedDescription)")
+            print("❌ Download/import error:", error)
+            await MainActor.run { errorMessage = error.localizedDescription }
         }
+    }
+
+    // 如果全文没有 chapter 标记，就作为一本无章节的 txt 存入
+    private func importTxtAsChapters(bookTitle: String, fullText: String) {
+        if !fullText.lowercased().contains("chapter ") {
+            let b = Book(title: bookTitle, content: fullText, isPinned: false, fileType: .txt, fileURL: nil)
+            context.insert(b)
+            return
+        }
+        // 否则尝试当 HTML 解析
+        guard let doc = try? SwiftSoup.parse(fullText) else {
+            let b = Book(title: bookTitle, content: fullText, isPinned: false, fileType: .txt, fileURL: nil)
+            context.insert(b)
+            return
+        }
+        importHtmlAsChapters(from: doc, bookTitle: bookTitle)
+    }
+
+    private func importHtmlAsChapters(from doc: SwiftSoup.Document, bookTitle: String) {
+        // 先新建一本空 Book
+        let newBook = Book(title: bookTitle, content: "", isPinned: false, fileType: .txt, fileURL: nil)
+        context.insert(newBook)
+
+        // 找到正文容器
+        guard let bodyDiv = try? doc.select("div.bodytext").first(),
+              let els = try? bodyDiv.select("h3.chapter, h4.event, p.narrative").array()
+        else {
+            // 回退：把纯文本放到 content
+            newBook.content = (try? doc.text()) ?? ""
+            return
+        }
+
+        var idx = 0
+        var curTitle = "Introduction"
+        var curText = ""
+
+        func saveChapter() {
+            // 只保存非空章节
+            let trimmed = curText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            idx += 1
+            let chap = Chapter(index: idx, title: curTitle, content: curText, book: newBook)
+            context.insert(chap)
+            newBook.chapters.append(chap)
+            curText = ""
+        }
+
+        for el in els {
+            let tag = el.tagName()
+            if tag == "h3", (try? el.hasClass("chapter")) == true {
+                // 遇到新章标题，先保存上一章
+                saveChapter()
+                // 再读取新章标题
+                if let t = try? el.text() {
+                    curTitle = t
+                }
+            }
+            else if tag == "h4", (try? el.hasClass("event")) == true {
+                // 事件标题也算内容的一部分
+                if let t = try? el.text() {
+                    curText += t + "\n\n"
+                }
+            }
+            else if tag == "p", (try? el.hasClass("narrative")) == true {
+                // 正文段落
+                if let t = try? el.text() {
+                    curText += t + "\n\n"
+                }
+            }
+        }
+        // 循环结束后保存最后一章
+        saveChapter()
     }
 }
 

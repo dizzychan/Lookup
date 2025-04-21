@@ -1,9 +1,8 @@
-// BookReaderView.swift
 import SwiftUI
 import SwiftData
-import UIKit // measureHeight + UIFont
+import UIKit   // UIFont, NSAttributedString
 
-// ——— 分页辅助，请务必和下面的 ReaderView 保持一致 ———
+// MARK: — 分页辅助函数 —（请保持和 ReaderView 同步）
 fileprivate func measureHeight(of text: String, font: UIFont, width: CGFloat) -> CGFloat {
   let attr = NSAttributedString(string: text, attributes: [.font: font])
   let rect = attr.boundingRect(
@@ -38,48 +37,44 @@ fileprivate func paginate(content: String,
   return pages
 }
 
-// ——— BookReaderView with Bookmark ———
+// MARK: — 分章 + 分页 + 章内书签 —
+
 struct BookReaderView: View {
-  let book: Book
-
-  // 拿所有章节
-  @Query private var allChapters: [Chapter]
-  // 拿所有书签
-  @Query private var allBookmarks: [Bookmark]
-
   @Environment(\.modelContext) private var context
   @AppStorage("readerFontSize") private var fontSize: Double = 18
 
+  let book: Book
+  @Query private var allChapters: [Chapter]   // 只取章节
+
+  // —— 状态 ——
   @State private var chapterList: [Chapter] = []
-  @State private var currentChapterIndex = 0
-
-  // 将当前章内容再分页
+  @State private var currentChapterIndex: Int = 0
   @State private var pages: [String] = []
-  @State private var currentPageIndex = 0
+  @State private var currentPageIndex: Int = 0
 
-  // 看看本书有没有书签
-  private var bookmark: Bookmark? {
-    allBookmarks.first { $0.bookId == book.id }
+  /// 本章本页是否已标记
+  private var isBookmarkedThisPage: Bool {
+    book.lastReadPageByChapter[currentChapterIndex] == currentPageIndex
   }
 
   var body: some View {
     GeometryReader { geo in
       VStack {
-        // 章节标题
+        // 章标题
         if currentChapterIndex < chapterList.count {
           Text(chapterList[currentChapterIndex].title)
             .font(.headline)
             .padding(.top, 8)
         }
 
-        // 分页翻页
+        // 分页展示
         TabView(selection: $currentPageIndex) {
           ForEach(pages.indices, id: \.self) { idx in
             Text(pages[idx])
               .font(.system(size: fontSize))
               .frame(
                 width: geo.size.width,
-                height: geo.size.height - 100,
+                height: geo.size.height - 100, // 底部留空
                 alignment: .topLeading
               )
               .padding()
@@ -87,26 +82,24 @@ struct BookReaderView: View {
           }
         }
         .tabViewStyle(.page(indexDisplayMode: .always))
-        .onAppear {
-          setupChapters(geometry: geo.size)
-        }
-        .onChange(of: fontSize) { _ in
-          recalcPages(geometry: geo.size)
-        }
+        .onAppear { setup(geo.size) }
+        .onChange(of: fontSize) { _ in recalcPages(geo.size) }
 
-        // 上下章按钮
+        // 章间切换按钮
         HStack {
           Button("Prev") {
             guard currentChapterIndex > 0 else { return }
             loadChapter(currentChapterIndex - 1, geometry: geo.size)
-          }.disabled(currentChapterIndex == 0)
+          }
+          .disabled(currentChapterIndex == 0)
 
           Spacer()
 
           Button("Next") {
             guard currentChapterIndex < chapterList.count - 1 else { return }
             loadChapter(currentChapterIndex + 1, geometry: geo.size)
-          }.disabled(currentChapterIndex >= chapterList.count - 1)
+          }
+          .disabled(currentChapterIndex >= chapterList.count - 1)
         }
         .padding()
       }
@@ -115,10 +108,10 @@ struct BookReaderView: View {
       .toolbar {
         ToolbarItem(placement: .navigationBarTrailing) {
           Button {
-            toggleBookmark()
+            toggleChapterBookmark()
           } label: {
-            Image(systemName: bookmark == nil ? "bookmark" : "bookmark.fill")
-              .foregroundColor(bookmark == nil ? .primary : .red)
+            Image(systemName: isBookmarkedThisPage ? "bookmark.fill" : "bookmark")
+              .foregroundColor(isBookmarkedThisPage ? .red : .primary)
           }
         }
       }
@@ -127,39 +120,37 @@ struct BookReaderView: View {
 
   // MARK: — 逻辑拆分 —
 
-  private func setupChapters(geometry: CGSize) {
-    let cs = allChapters
+  private func setup(_ size: CGSize) {
+    // 1) 拿本书所有章节并排序
+    chapterList = allChapters
       .filter { $0.book.id == book.id }
       .sorted { $0.index < $1.index }
-    chapterList = cs
 
-    if cs.isEmpty {
-      // 纯文本没章节
+    // 2) 第1章或全文分页
+    if chapterList.isEmpty {
       pages = paginate(
         content: book.content,
         fontSize: CGFloat(fontSize),
-        containerSize: geometry
+        containerSize: size
       )
     } else {
-      loadChapter(0, geometry: geometry)
+      loadChapter(0, geometry: size)
     }
 
-    // 如果有书签就跳到那页
-    if let bm = bookmark,
-       bm.chapterIndex < chapterList.count,
-       bm.pageIndex < pages.count
+    // 3) 如果已有记录，就跳到对应章&页
+    if let savedPage = book.lastReadPageByChapter[currentChapterIndex],
+       savedPage < pages.count
     {
-      currentChapterIndex = bm.chapterIndex
-      currentPageIndex = bm.pageIndex
+      currentPageIndex = savedPage
     }
   }
 
   private func loadChapter(_ idx: Int, geometry: CGSize) {
     currentChapterIndex = idx
-    recalcPages(geometry: geometry)
+    recalcPages(geometry)
   }
 
-  private func recalcPages(geometry: CGSize) {
+  private func recalcPages(_ geometry: CGSize) {
     let content = chapterList.isEmpty
       ? book.content
       : chapterList[currentChapterIndex].content
@@ -169,25 +160,23 @@ struct BookReaderView: View {
       fontSize: CGFloat(fontSize),
       containerSize: geometry
     )
-    // 如果书签在本章，保持它，否则跳到 0
-    if let bm = bookmark, bm.chapterIndex == currentChapterIndex {
-      currentPageIndex = min(bm.pageIndex, pages.count - 1)
+
+    // 如果本章已经有记录，则跳转到它，否则回到 0
+    if let saved = book.lastReadPageByChapter[currentChapterIndex],
+       saved < pages.count
+    {
+      currentPageIndex = saved
     } else {
       currentPageIndex = 0
     }
   }
 
-  private func toggleBookmark() {
-    if let bm = bookmark {
-      bm.chapterIndex = currentChapterIndex
-      bm.pageIndex    = currentPageIndex
+  /// 打／取消 本章本页的书签
+  private func toggleChapterBookmark() {
+    if isBookmarkedThisPage {
+      book.lastReadPageByChapter[currentChapterIndex] = nil
     } else {
-      let bm = Bookmark(
-        bookId:        book.id,
-        chapterIndex:  currentChapterIndex,
-        pageIndex:     currentPageIndex
-      )
-      context.insert(bm)
+      book.lastReadPageByChapter[currentChapterIndex] = currentPageIndex
     }
     try? context.save()
   }

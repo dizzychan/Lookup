@@ -16,7 +16,7 @@ struct ImportView: View {
                     Text("Error: \(errorMessage)")
                         .foregroundColor(.red)
                 }
-                
+
                 Button("Import File") {
                     isImporting = true
                 }
@@ -30,182 +30,143 @@ struct ImportView: View {
                         guard let selectedFile = urls.first else { return }
                         handleFile(at: selectedFile)
                     case .failure(let error):
-                        self.errorMessage = error.localizedDescription
-                        print("File importer error: \(error.localizedDescription)")
+                        errorMessage = error.localizedDescription
                     }
                 }
             }
             .navigationTitle("Import")
         }
     }
-    
+
     private func handleFile(at url: URL) {
         do {
             let ext = url.pathExtension.lowercased()
             let bookTitle = url.deletingPathExtension().lastPathComponent
-            print("Handling file: \(bookTitle), ext: \(ext)")
-            
+
             switch ext {
             case "txt":
                 let fileContent = try String(contentsOf: url, encoding: .utf8)
-                print("Read txt file content length: \(fileContent.count)")
                 importTxtAsChapters(bookTitle: bookTitle, fullText: fileContent)
-                
-            case "pdf":
+
+            case "pdf", "epub", "docx":
+                // 非 txt，直接存 Book，走常规 copy + insert
+                let type: BookFileType = BookFileType(rawValue: ext) ?? .unknown
                 let newURL = try copyFileToDocuments(originalURL: url)
-                let newBook = Book(title: bookTitle, fileType: .pdf, fileURL: newURL.path)
+                let newBook = Book(
+                    title: bookTitle,
+                    content: "",
+                    isPinned: false,
+                    fileType: type,
+                    fileURL: newURL.path
+                )
                 context.insert(newBook)
-                print("Imported pdf file, stored at: \(newURL.path)")
-                
-            case "epub":
-                let newURL = try copyFileToDocuments(originalURL: url)
-                let newBook = Book(title: bookTitle, fileType: .epub, fileURL: newURL.path)
-                context.insert(newBook)
-                print("Imported epub file, stored at: \(newURL.path)")
-                
-            case "docx":
-                let newURL = try copyFileToDocuments(originalURL: url)
-                let newBook = Book(title: bookTitle, fileType: .docx, fileURL: newURL.path)
-                context.insert(newBook)
-                print("Imported docx file, stored at: \(newURL.path)")
-                
+
             default:
                 let newURL = try copyFileToDocuments(originalURL: url)
-                let newBook = Book(title: bookTitle, fileType: .unknown, fileURL: newURL.path)
+                let newBook = Book(
+                    title: bookTitle,
+                    content: "",
+                    isPinned: false,
+                    fileType: .unknown,
+                    fileURL: newURL.path
+                )
                 context.insert(newBook)
-                print("Imported unknown file type, stored at: \(newURL.path)")
             }
-            
+
             try context.save()
             print("Save success after handling file.")
         } catch {
-            self.errorMessage = error.localizedDescription
-            print("handleFile error: \(error.localizedDescription)")
+            errorMessage = error.localizedDescription
+            print("handleFile error: \(error)")
         }
     }
-    
+
     /// 分章节导入 txt 文件
-    /// 如果文本中不含 "chapter "（不区分大小写），则直接将全文存入 Book.content；否则，解析 HTML 结构，按章节拆分存入 Chapter 模型。
     private func importTxtAsChapters(bookTitle: String, fullText: String) {
-        print("Importing txt file: \(bookTitle), fullText length: \(fullText.count)")
+        // 检测是否有章节关键词
         if !fullText.lowercased().contains("chapter ") {
-            let newBook = Book(title: bookTitle, content: fullText, fileType: .txt)
+            // 没有则直接存成一整本
+            let newBook = Book(
+                title: bookTitle,
+                content: fullText,
+                isPinned: false,
+                fileType: .txt,
+                fileURL: nil
+            )
             context.insert(newBook)
-            do {
-                try context.save()
-                print("Import: No 'chapter ' found. Stored entire text. Length=\(fullText.count)")
-            } catch {
-                print("Import Error (fallback single-chapter): \(error.localizedDescription)")
-            }
             return
         }
-        
-        print("Import: Found 'chapter ' in text, proceeding to split into chapters using HTML parsing...")
-        guard let doc = try? SwiftSoup.parse(fullText) else {
-            print("Error: Failed to parse fullText as HTML. Fallback to storing entire text.")
-            let newBook = Book(title: bookTitle, content: fullText, fileType: .txt)
-            context.insert(newBook)
-            do {
-                try context.save()
-            } catch {
-                print("Fallback save error: \(error.localizedDescription)")
-            }
-            return
-        }
-        
-        importHtmlAsChapters(from: doc, bookTitle: bookTitle)
-    }
-    
-    /// 使用 HTML DOM 结构拆分章节，并存入 SwiftData 的 Chapter 模型
-    private func importHtmlAsChapters(from doc: Document, bookTitle: String) {
-        // 创建新的 Book，章节存储时 Book.content 为空
-        let newBook = Book(title: bookTitle, content: "", fileType: .txt)
+
+        // 创建空 Book 以插入章节
+        let newBook = Book(
+            title: bookTitle,
+            content: "",
+            isPinned: false,
+            fileType: .txt,
+            fileURL: nil
+        )
         context.insert(newBook)
-        
-        // 尝试获取正文容器
-        guard let bodytextDiv = try? doc.select("div.bodytext").first() else {
-            print("No div.bodytext found. Fallback: storing entire text in Book.content.")
-            if let plainText = try? doc.text() {
-                newBook.content = plainText
-            }
-            do {
-                try context.save()
-            } catch {
-                print("Save error in fallback: \(error.localizedDescription)")
-            }
+
+        // HTML 解析分章
+        guard
+            let doc = try? SwiftSoup.parse(fullText),
+            let bodytextDiv = try? doc.select("div.bodytext").first(),
+            let elements = try? bodytextDiv.select("h3.chapter, h4.event, p.narrative").array()
+        else {
+            // 解析失败时 fallback
+            newBook.content = fullText
             return
         }
-        
-        // 选择正文中所有相关元素，按出现顺序排列
-        guard let elements = try? bodytextDiv.select("h3.chapter, h4.event, p.narrative").array() else {
-            print("Failed to select chapter elements.")
-            newBook.content = (try? doc.text()) ?? ""
-            do {
-                try context.save()
-            } catch {
-                print("Save error in fallback: \(error.localizedDescription)")
-            }
-            return
-        }
-        
-        var currentChapterTitle: String = "Introduction"
-        var currentChapterContent: String = ""
+
         var chapterIndex = 0
-        
-        for element in elements {
-            let tag = element.tagName()
-            if tag == "h3", (try? element.hasClass("chapter")) == true {
-                // 如果已有章节内容，则保存上一章
-                if !currentChapterContent.isEmpty {
-                    chapterIndex += 1
-                    let chapter = Chapter(index: chapterIndex,
-                                          title: currentChapterTitle,
-                                          content: currentChapterContent,
-                                          book: newBook)
-                    context.insert(chapter)
-                    newBook.chapters.append(chapter)  // 追加到 Book 的 chapters 数组
-                    print("Inserted chapter \(chapterIndex): \(currentChapterTitle), content length: \(currentChapterContent.count)")
-                    currentChapterContent = ""
-                }
-                currentChapterTitle = (try? element.text()) ?? "Unknown Chapter"
-            } else if tag == "h4", (try? element.hasClass("event")) == true {
-                let eventText = (try? element.text()) ?? ""
-                currentChapterContent += eventText + "\n\n"
-            } else if tag == "p", (try? element.hasClass("narrative")) == true {
-                let para = (try? element.text()) ?? ""
-                currentChapterContent += para + "\n\n"
+        var currentTitle = "Introduction"
+        var currentContent = ""
+
+        func saveCurrentChapter() {
+            guard !currentContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                currentContent = ""
+                return
+            }
+            chapterIndex += 1
+            let chap = Chapter(
+                index: chapterIndex,
+                title: currentTitle,
+                content: currentContent,
+                book: newBook
+            )
+            context.insert(chap)
+            newBook.chapters.append(chap)  // ★ 关键：维护到 Book.chapters
+            currentContent = ""
+        }
+
+        for el in elements {
+            let tag = el.tagName()
+            if tag == "h3", (try? el.hasClass("chapter")) == true {
+                // 遇到新章节
+                saveCurrentChapter()
+                currentTitle = (try? el.text()) ?? "Chapter \(chapterIndex+1)"
+            }
+            else if tag == "h4", (try? el.hasClass("event")) == true {
+                let text = (try? el.text()) ?? ""
+                currentContent += text + "\n\n"
+            }
+            else if tag == "p", (try? el.hasClass("narrative")) == true {
+                let text = (try? el.text()) ?? ""
+                currentContent += text + "\n\n"
             }
         }
-        
-        // 保存最后剩余的章节内容
-        if !currentChapterContent.isEmpty {
-            chapterIndex += 1
-            let chapter = Chapter(index: chapterIndex,
-                                  title: currentChapterTitle,
-                                  content: currentChapterContent,
-                                  book: newBook)
-            context.insert(chapter)
-            newBook.chapters.append(chapter)
-            print("Inserted final chapter \(chapterIndex): \(currentChapterTitle), content length: \(currentChapterContent.count)")
-        }
-        
-        do {
-            try context.save()
-            print("Import success: Book=\(newBook.title), Chapters=\(chapterIndex)")
-        } catch {
-            print("Error saving chapters: \(error.localizedDescription)")
-        }
+        // 保存最后一章
+        saveCurrentChapter()
     }
-    
+
     private func copyFileToDocuments(originalURL: URL) throws -> URL {
         let fileManager = FileManager.default
         let docsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
         let destinationURL = docsURL.appendingPathComponent(originalURL.lastPathComponent)
-        
+
         if fileManager.fileExists(atPath: destinationURL.path) {
             try fileManager.removeItem(at: destinationURL)
         }
-        
         try fileManager.copyItem(at: originalURL, to: destinationURL)
         return destinationURL
     }

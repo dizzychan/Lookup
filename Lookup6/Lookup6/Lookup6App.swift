@@ -16,14 +16,16 @@ struct Lookup6App: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                // 一次性把你用到的所有 Model 都注册进来
-                .modelContainer(for: [
-                    Book.self,
-                    Chapter.self,
-                    Bookmark.self,
-                    Item.self   // 如果你还有 Item 之类的实体，就放这里
-                ])
+                // 一次性把所有用到的 Model 注册进去：
+                .modelContainer(
+                    for: [
+                        Book.self,
+                        Chapter.self,
+                        Item.self
+                    ]
+                )
                 .preferredColorScheme(isDarkMode ? .dark : .light)
         }
     }
 }
+
