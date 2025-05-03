@@ -21,7 +21,7 @@ fileprivate func measureHeight(of text: String, font: UIFont, width: CGFloat) ->
 }
 
 /// 1) 归一化换行：\r\n/\r -> \n，去掉段落间空格
-/// 2) 按 “\n\n” 切段落，保留双换行标记
+/// 2) 按 "\n\n" 切段落，保留双换行标记
 /// 3) 再按空格拆词，得到 tokens
 fileprivate func paginate(content: String,
                           fontSize: CGFloat,
@@ -34,14 +34,20 @@ fileprivate func paginate(content: String,
   
   let words = flat.split(whereSeparator: \.isWhitespace).map(String.init)
   let usableW = containerSize.width  - 2 * padding
-  let usableH = containerSize.height - 2 * padding
+  let usableH = containerSize.height - 2 * padding - 8 - 24 - 50 // 减去顶部和底部的额外padding
   let font    = UIFont.systemFont(ofSize: fontSize)
+  let lineSpacing: CGFloat = 6  // 与视图中的lineSpacing保持一致
 
   var pages: [String] = []
   var cur = ""
   for w in words {
     let next = cur.isEmpty ? w : cur + " " + w
-    if measureHeight(of: next, font: font, width: usableW) > usableH {
+    let height = measureHeight(of: next, font: font, width: usableW)
+    // 考虑行间距：每行都会有一个行间距，所以总高度需要加上行数 * 行间距
+    let lineCount = ceil(height / font.lineHeight)
+    let totalHeight = height + (lineCount - 1) * lineSpacing
+    
+    if totalHeight > usableH {
       pages.append(cur)
       cur = w
     } else {
@@ -118,6 +124,13 @@ struct BookReaderView: View {
         .onAppear { setup(geo.size) }
         .onChange(of: fontSize)    { _ in recalcPages(geo.size) }
         .onChange(of: fontStyleRaw){ _ in recalcPages(geo.size) }
+        .onChange(of: currentPageIndex) { newIndex in
+          if pages.indices.contains(newIndex) {
+            print("=== Page \(newIndex + 1) ===")
+            print(pages[newIndex])
+            print("====================")
+          }
+        }
 
         // — Prev/Next —
         HStack {
@@ -157,7 +170,7 @@ struct BookReaderView: View {
   // —— 以下逻辑不变 ——
   private func setup(_ size: CGSize) {
     chapterList = allChapters
-      .filter { $0.book.id == book.id }
+      .filter { $0.book?.id == book.id }
       .sorted { $0.index < $1.index }
 
     if chapterList.isEmpty {

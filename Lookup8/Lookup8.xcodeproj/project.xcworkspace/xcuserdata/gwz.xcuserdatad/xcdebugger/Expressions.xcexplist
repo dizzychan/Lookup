@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<VariablesViewState
+   version = "1.0">
+   <ContextStates>
+      <ContextState
+         contextName = "BookReaderView.loadChapter(_:geometry:):BookReaderView.swift">
+         <PersistentStrings>
+            <PersistentString
+               value = "chapterList">
+            </PersistentString>
+         </PersistentStrings>
+      </ContextState>
+      <ContextState
+         contextName = "SourceView.importHTMLAsChapters(title:content:):SourceView.swift">
+         <PersistentStrings>
+            <PersistentString
+               value = "book.chapters">
+            </PersistentString>
+         </PersistentStrings>
+      </ContextState>
+      <ContextState
+         contextName = "closure #1 in SourceView.importRemote(_:):SourceView.swift">
+      </ContextState>
+   </ContextStates>
+</VariablesViewState>

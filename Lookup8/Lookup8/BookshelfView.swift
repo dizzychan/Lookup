@@ -44,11 +44,20 @@ struct BookShelfView: View {
                                 // 3）点击进入对应的阅读器
                                 NavigationLink(destination: destination(for: book)) {
                                     VStack(spacing: 8) {
-                                        Image(systemName: iconName(for: book))
-                                            .resizable()
-                                            .scaledToFit()
-                                            .frame(height: 80)
-                                            .foregroundColor(.accentColor)
+                                        if let coverData = book.coverImage,
+                                           let uiImage = UIImage(data: coverData) {
+                                            Image(uiImage: uiImage)
+                                                .resizable()
+                                                .scaledToFit()
+                                                .frame(height: 120)
+                                                .cornerRadius(4)
+                                        } else {
+                                            Image(systemName: iconName(for: book))
+                                                .resizable()
+                                                .scaledToFit()
+                                                .frame(height: 80)
+                                                .foregroundColor(.accentColor)
+                                        }
                                         Text(book.title)
                                             .font(.headline)
                                             .multilineTextAlignment(.center)
@@ -60,17 +69,23 @@ struct BookShelfView: View {
                                     .cornerRadius(8)
                                 }
                                 .contextMenu {
-                                    // —— 安全删除 ——
-                                    Button(role: .destructive) {
-                                        Task {
-                                            await MainActor.run {
-                                                context.delete(book)
-                                                try? context.save()
-                                            }
+                                  // —— 安全删除 ——
+                                  Button(role: .destructive) {
+                                    Task {
+                                      await MainActor.run {
+                                        // 1. 先删掉所有关联的章节
+                                        for chapter in book.chapters {
+                                          context.delete(chapter)
                                         }
-                                    } label: {
-                                        Label("Delete", systemImage: "trash")
+                                        // 2. 然后再删掉书本身
+                                        context.delete(book)
+                                        // 3. 最后保存
+                                        try? context.save()
+                                      }
                                     }
+                                  } label: {
+                                    Label("Delete", systemImage: "trash")
+                                  }
 
                                     // —— 安全置顶/取消置顶 ——
                                     Button {

@@ -18,7 +18,7 @@ class Chapter {
     var content: String
 
     /// 反向指回 Book.chapters
-    var book: Book
+    var book: Book?
 
     init(index: Int, title: String, content: String, book: Book) {
         self.index = index

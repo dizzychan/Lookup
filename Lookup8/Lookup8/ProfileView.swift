@@ -18,6 +18,7 @@ struct ProfileView: View {
     @State private var password        = ""
     @State private var confirmPassword = ""
     @State private var errorMessage: String?
+    @State private var isRegistering = false
 
     var body: some View {
         NavigationStack {
@@ -124,7 +125,12 @@ struct ProfileView: View {
                     signUp()
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(username.isEmpty || password.isEmpty)
+                .disabled(username.isEmpty || password.isEmpty || isRegistering)
+                                .overlay {
+                                    if isRegistering {
+                                        ProgressView()
+                                    }
+                                }
             }
 
             Spacer()
@@ -134,17 +140,19 @@ struct ProfileView: View {
 
     // MARK: — 登录／注册／登出 逻辑
     private func signIn() {
-        // 从 UserDefaults 里读密码（key = "pw_<username>"）
-        let key   = "pw_\(username.lowercased())"
-        let saved = UserDefaults.standard.string(forKey: key)
-
-        if let saved = saved, saved == password {
-            // 登录成功
-            storedUsername = username
-            isLoggedIn     = true
-            errorMessage   = nil
-        } else {
-            errorMessage = "Invalid credentials"
+        Task {
+            do {
+                let response = try await NetworkManager.shared.login(username: username, password: password)
+                if let user = response["user"] as? [String: Any] {
+                    storedUsername = user["username"] as? String ?? username
+                    isLoggedIn = true
+                    errorMessage = nil
+                }
+            } catch NetworkError.serverError(let message) {
+                errorMessage = message
+            } catch {
+                errorMessage = "Login failed, please try again later"
+            }
         }
     }
 
@@ -158,15 +166,25 @@ struct ProfileView: View {
             errorMessage = "Password too short"
             return
         }
-
-        // 存到 UserDefaults
-        let key = "pw_\(username.lowercased())"
-        UserDefaults.standard.set(password, forKey: key)
-
-        // 直接登录
-        storedUsername = username
-        isLoggedIn     = true
-        errorMessage   = nil
+        
+        isRegistering = true
+        
+        Task {
+            do {
+                let success = try await NetworkManager.shared.register(username: username, password: password)
+                if success {
+                    // 注册成功，直接登录
+                    storedUsername = username
+                    isLoggedIn = true
+                    errorMessage = nil
+                }
+            } catch NetworkError.serverError(let message) {
+                errorMessage = message
+            } catch {
+                errorMessage = "Registration failed. Please try again."
+            }
+            isRegistering = false
+        }
     }
 
     private func signOut() {

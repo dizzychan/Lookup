@@ -30,6 +30,9 @@ class Book {
     var fileType: BookFileType
     /// 如果是 pdf/epub/docx，就存本地路径
     var fileURL: String?
+    
+    /// 封面图片数据
+    var coverImage: Data?
 
     /// ⚡️ 与 Chapter 的一对多关系，Cascade 删除
     @Relationship( deleteRule: .cascade, inverse: \Chapter.book )
