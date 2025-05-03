@@ -17,8 +17,6 @@ enum NetworkError: Error {
 class NetworkManager {
     static let shared = NetworkManager()
     private let baseURL = "http://localhost:3000/api"
-    private let openLibraryBaseURL = "https://openlibrary.org"
-    private let gutendexBaseURL = "https://gutendex.com"
     
     private init() {}
     
@@ -85,81 +83,5 @@ class NetworkManager {
         }
         
         return json
-    }
-    
-    // MARK: - Gutendex API
-    
-    func searchBooks(query: String) async throws -> [SourceItem] {
-        guard let url = URL(string: "\(gutendexBaseURL)/books?search=\(query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")") else {
-            throw NetworkError.invalidURL
-        }
-        
-        let (data, response) = try await URLSession.shared.data(from: url)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw NetworkError.invalidResponse
-        }
-        
-        if httpResponse.statusCode != 200 {
-            throw NetworkError.serverError("Failed to fetch books")
-        }
-        
-        let decoder = JSONDecoder()
-        let result = try decoder.decode(GutendexResponse.self, from: data)
-        
-        return result.results.map { book in
-            SourceItem(
-                title: book.title,
-                author: book.authors.first?.name ?? "Unknown Author",
-                detailURL: URL(string: book.formats["text/html"] ?? book.formats["text/plain"] ?? "https://www.gutenberg.org/ebooks/\(book.id)")!,
-                coverURL: URL(string: book.formats["image/jpeg"] ?? "")
-            )
-        }
-    }
-    
-    func fetchBookContent(url: URL) async throws -> String {
-        let (data, response) = try await URLSession.shared.data(from: url)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw NetworkError.invalidResponse
-        }
-        
-        if httpResponse.statusCode != 200 {
-            throw NetworkError.serverError("Failed to fetch book content")
-        }
-        
-        if let htmlString = String(data: data, encoding: .utf8) {
-            return htmlString
-        }
-        
-        throw NetworkError.invalidData
-    }
-}
-
-// MARK: - Gutendex Models
-
-struct GutendexResponse: Codable {
-    let count: Int
-    let next: String?
-    let previous: String?
-    let results: [GutendexBook]
-}
-
-struct GutendexBook: Codable {
-    let id: Int
-    let title: String
-    let authors: [GutendexAuthor]
-    let formats: [String: String]
-}
-
-struct GutendexAuthor: Codable {
-    let name: String
-    let birthYear: Int?
-    let deathYear: Int?
-    
-    enum CodingKeys: String, CodingKey {
-        case name
-        case birthYear = "birth_year"
-        case deathYear = "death_year"
     }
 }

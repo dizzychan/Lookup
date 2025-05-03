@@ -44,20 +44,11 @@ struct BookShelfView: View {
                                 // 3）点击进入对应的阅读器
                                 NavigationLink(destination: destination(for: book)) {
                                     VStack(spacing: 8) {
-                                        if let coverData = book.coverImage,
-                                           let uiImage = UIImage(data: coverData) {
-                                            Image(uiImage: uiImage)
-                                                .resizable()
-                                                .scaledToFit()
-                                                .frame(height: 120)
-                                                .cornerRadius(4)
-                                        } else {
-                                            Image(systemName: iconName(for: book))
-                                                .resizable()
-                                                .scaledToFit()
-                                                .frame(height: 80)
-                                                .foregroundColor(.accentColor)
-                                        }
+                                        Image(systemName: iconName(for: book))
+                                            .resizable()
+                                            .scaledToFit()
+                                            .frame(height: 80)
+                                            .foregroundColor(.accentColor)
                                         Text(book.title)
                                             .font(.headline)
                                             .multilineTextAlignment(.center)
